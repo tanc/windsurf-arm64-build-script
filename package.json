@@ -1,0 +1,12 @@
+{
+  "name": "windsurf-downloader",
+  "version": "1.0.0",
+  "description": "Scrapes the Windsurf releases page for the latest source tarball URL.",
+  "main": "get-download-url.js",
+  "scripts": {
+    "start": "node get-download-url.js"
+  },
+  "dependencies": {
+    "playwright": "1.53.1"
+  }
+}

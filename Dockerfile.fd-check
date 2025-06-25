@@ -1,0 +1,3 @@
+FROM scratch
+COPY fd /fd
+ENTRYPOINT ["/fd", "--version"]
