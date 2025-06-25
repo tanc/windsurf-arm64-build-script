@@ -157,7 +157,14 @@ tar -xzf "${BUILD_DIR}/fd-arm64.tar.gz" -C "${FD_DIR}" --strip-components=1
 # Build Windsurf
 echo "Building Windsurf..."
 mkdir -p "${FINAL_DIR}"
-cp -R "${VSCODE_DIR}/." "${FINAL_DIR}"
+cp -r "${VSCODE_DIR}/." "${FINAL_DIR}"
+
+# Overwrite with Windsurf's bin directory to get windsurf-cli
+rm -rf "${FINAL_DIR}/bin"
+cp -r "${WINDSURF_SRC_DIR}/bin" "${FINAL_DIR}/"
+
+# Rename the main executable
+mv "${FINAL_DIR}/code" "${FINAL_DIR}/windsurf"
 
 # Copy Windsurf-specific files
 cp -R "${WINDSURF_SRC_DIR}/resources/app/out" "${FINAL_DIR}/resources/app/"
