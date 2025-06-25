@@ -116,10 +116,16 @@ if [ ! -f "${FD_X64_BIN_PATH}/fd" ]; then
 fi
 
 echo "Checking fd version..."
-docker build -t fd-version-check -f Dockerfile.fd-check "${FD_X64_BIN_PATH}" > /dev/null
-FD_VERSION_STRING=$(docker run --rm fd-version-check)
-FD_VERSION=$(echo "${FD_VERSION_STRING}" | cut -d ' ' -f 2)
-echo "Found fd version: v${FD_VERSION}"
+echo "Building temporary container to get fd version..."
+docker build --platform=linux/amd64 -t fd-version-check -f Dockerfile.fd-check "${FD_X64_BIN_PATH}" > /dev/null
+FD_VERSION_STRING=$(docker run --rm --platform=linux/amd64 fd-version-check 2>/dev/null || true)
+FD_VERSION=$(echo "$FD_VERSION_STRING" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+if [ -z "$FD_VERSION" ]; then
+  echo "Could not extract fd version from binary. Falling back to 10.2.0"
+  FD_VERSION="10.2.0"
+else
+  echo "Found fd version: v${FD_VERSION}"
+fi
 
 # Define dynamic URLs
 VSCODE_LINUX_ARM64_URL="https://update.code.visualstudio.com/${VSCODE_VERSION}/linux-arm64/stable"
