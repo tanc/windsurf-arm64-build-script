@@ -1,3 +1,4 @@
-FROM scratch
+FROM --platform=linux/amd64 alpine
 COPY fd /fd
+RUN chmod +x /fd
 ENTRYPOINT ["/fd", "--version"]
