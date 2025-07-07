@@ -171,6 +171,7 @@ cp -R "${WINDSURF_SRC_DIR}/resources/app/out" "${FINAL_DIR}/resources/app/"
 cp "${WINDSURF_SRC_DIR}/resources/app/package.json" "${FINAL_DIR}/resources/app/"
 cp "${WINDSURF_SRC_DIR}/resources/app/product.json" "${FINAL_DIR}/resources/app/"
 cp -R "${WINDSURF_SRC_DIR}/resources/app/extensions/"* "${FINAL_DIR}/resources/app/extensions/"
+cp "${WINDSURF_SRC_DIR}/resources/app/resources/linux/code.png" "${FINAL_DIR}/resources/app/resources/linux/code.png"
 
 # Copy language server and fd, and make them executable
 BIN_DEST_DIR="${FINAL_DIR}/resources/app/extensions/windsurf/bin"
