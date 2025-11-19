@@ -1,28 +1,48 @@
 #!/usr/bin/env bash
 
+# Build Windsurf for Linux ARM64 by:
+# 1. Scraping the official Windsurf Linux x64 download URL via a Docker-based scraper.
+# 2. Extracting the Windsurf version and commit hash from that URL.
+# 3. Downloading VS Code for Linux ARM64 for the core application binaries.
+# 4. Downloading the Windsurf server for Linux ARM64 to get fd and the language server.
+# 5. Combining these pieces into a final Windsurf Linux ARM64 build and tarball.
+
 set -euo pipefail
 
+# Enable debug output
+set -x
+
 # Versions
-# WINDSURF_VERSION will be extracted from the downloaded tarball filename
-# VSCODE_VERSION will be extracted from the source
-# FD_VERSION will be discovered from the included fd binary
+# WINDSURF_VERSION is extracted from the Windsurf Linux x64 tarball filename
+# VSCODE_VERSION is extracted from the Windsurf source package.json
 
 # URLs
-# WINDSURF_SRC_URL will be discovered by the scraper script
-# VSCODE_LINUX_ARM64_URL will be defined after extracting the version
-# LANGUAGE_SERVER_ARM64_URL will be defined after extracting the version
-# FD_ARM64_URL will be constructed after discovering the version
+# WINDSURF_SRC_URL is discovered by the scraper container
+# VSCODE_LINUX_ARM64_URL is constructed using VSCODE_VERSION
+# WINDSURF_SERVER_URL is constructed from WINDSURF_VERSION and the commit hash
 
 # Directories
 BUILD_DIR="$(pwd)/build"
 WINDSURF_SRC_DIR="${BUILD_DIR}/windsurf-src"
 VSCODE_DIR="${BUILD_DIR}/vscode-linux-arm64"
-FD_DIR="${BUILD_DIR}/fd-arm64"
+WINDSURF_SERVER_DIR="${BUILD_DIR}/windsurf-server-linux-arm64"
 OUTPUT_DIR="${BUILD_DIR}/output"
+
+# Parse command line arguments
 NO_REDOWNLOAD=false
-if [ "${1:-}" = "--no-redownload" ]; then
-  NO_REDOWNLOAD=true
-fi
+USER_FD_VERSION=""
+for arg in "$@"; do
+  if [ "$arg" = "--no-redownload" ]; then
+    NO_REDOWNLOAD=true
+  elif [[ "$arg" =~ ^--fd-version=([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+    USER_FD_VERSION="${BASH_REMATCH[1]}"
+    echo "Using user-specified fd version: $USER_FD_VERSION"
+  fi
+done
+
+# Detect host architecture
+HOST_ARCH=$(uname -m)
+echo "Host architecture: $HOST_ARCH"
 
 # Setup directories and download Windsurf source if needed
 if [ "$NO_REDOWNLOAD" = false ]; then
@@ -30,11 +50,11 @@ if [ "$NO_REDOWNLOAD" = false ]; then
   rm -rf "${BUILD_DIR}"
 
   # Create directories
-  mkdir -p "${BUILD_DIR}" "${WINDSURF_SRC_DIR}" "${VSCODE_DIR}" "${FD_DIR}" "${OUTPUT_DIR}"
+  mkdir -p "${BUILD_DIR}" "${WINDSURF_SRC_DIR}" "${VSCODE_DIR}" "${OUTPUT_DIR}"
 
   # Get Windsurf source URL using the scraper
   echo "Building scraper image..."
-  docker build -t windsurf-downloader . > /dev/null
+  docker build -t windsurf-downloader .
   echo "Running scraper to find Windsurf source URL..."
   WINDSURF_SRC_URL=$(docker run --rm windsurf-downloader)
 
@@ -56,9 +76,18 @@ if [ "$NO_REDOWNLOAD" = false ]; then
     exit 1
   fi
 
+  # Extract commit hash from the Windsurf source URL
+  WINDSURF_COMMIT_HASH=$(echo "${WINDSURF_SRC_URL}" | sed -E 's#.*/stable/([^/]+)/Windsurf-linux-x64-.*#\1#')
+
+  if [ -z "$WINDSURF_COMMIT_HASH" ]; then
+    echo "Error: Could not extract WINDSURF_COMMIT_HASH from URL: ${WINDSURF_SRC_URL}"
+    exit 1
+  fi
+
   # Save build info for subsequent runs
   echo "WINDSURF_SRC_URL='${WINDSURF_SRC_URL}'" > "${BUILD_DIR}/build_info.sh"
   echo "WINDSURF_VERSION='${WINDSURF_VERSION}'" >> "${BUILD_DIR}/build_info.sh"
+  echo "WINDSURF_COMMIT_HASH='${WINDSURF_COMMIT_HASH}'" >> "${BUILD_DIR}/build_info.sh"
 
 else
   echo "Skipping download of Windsurf source."
@@ -71,6 +100,7 @@ if [ ! -f "${BUILD_DIR}/build_info.sh" ]; then
 fi
 source "${BUILD_DIR}/build_info.sh"
 echo "Found Windsurf version: ${WINDSURF_VERSION}"
+echo "Using Windsurf commit hash: ${WINDSURF_COMMIT_HASH}"
 
 # Define final directory now that we have the version
 FINAL_DIR="${OUTPUT_DIR}/windsurf_${WINDSURF_VERSION}_linux_arm64"
@@ -94,54 +124,25 @@ if [ -z "$VSCODE_VERSION" ]; then
 fi
 echo "Found VS Code version: ${VSCODE_VERSION}"
 
-# Extract Language Server version
-echo "Extracting Language Server and fd versions..."
+echo "Extracting Language Server and fd versions from Windsurf source (no external downloads needed)..."
 EXTENSION_JS_PATH="${WINDSURF_SRC_DIR}/resources/app/extensions/windsurf/dist/extension.js"
 if [ -z "$EXTENSION_JS_PATH" ]; then
   echo "Error: extension.js not found"
   exit 1
 fi
-LANGUAGE_SERVER_VERSION=$(grep -oP 'LANGUAGE_SERVER_VERSION="\K[0-9\.]+' "${EXTENSION_JS_PATH}")
-if [ -z "$LANGUAGE_SERVER_VERSION" ]; then
-  echo "Error: Could not extract LANGUAGE_SERVER_VERSION from ${EXTENSION_JS_PATH}"
-  exit 1
-fi
-echo "Found Language Server version: ${LANGUAGE_SERVER_VERSION}"
-
-# Extract fd version from the included binary
-FD_X64_BIN_PATH="${WINDSURF_SRC_DIR}/resources/app/extensions/windsurf/bin"
-if [ ! -f "${FD_X64_BIN_PATH}/fd" ]; then
-  echo "Error: fd binary not found at ${FD_X64_BIN_PATH}"
-  exit 1
-fi
-
-echo "Checking fd version..."
-echo "Building temporary container to get fd version..."
-docker build --platform=linux/amd64 -t fd-version-check -f Dockerfile.fd-check "${FD_X64_BIN_PATH}" > /dev/null
-FD_VERSION_STRING=$(docker run --rm --platform=linux/amd64 fd-version-check 2>/dev/null || true)
-FD_VERSION=$(echo "$FD_VERSION_STRING" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-if [ -z "$FD_VERSION" ]; then
-  echo "Could not extract fd version from binary. Falling back to 10.2.0"
-  FD_VERSION="10.2.0"
-else
-  echo "Found fd version: v${FD_VERSION}"
-fi
 
 # Define dynamic URLs
 VSCODE_LINUX_ARM64_URL="https://update.code.visualstudio.com/${VSCODE_VERSION}/linux-arm64/stable"
-LANGUAGE_SERVER_ARM64_URL="https://github.com/Exafunction/codeium/releases/download/language-server-v${LANGUAGE_SERVER_VERSION}/language_server_linux_arm"
-FD_ARM64_URL="https://github.com/sharkdp/fd/releases/download/v${FD_VERSION}/fd-v${FD_VERSION}-aarch64-unknown-linux-gnu.tar.gz"
+WINDSURF_SERVER_ARCHIVE_NAME="windsurf-reh-linux-arm64-${WINDSURF_VERSION}.tar.gz"
+WINDSURF_SERVER_URL="https://windsurf-stable.codeiumdata.com/linux-reh-arm64/stable/${WINDSURF_COMMIT_HASH}/${WINDSURF_SERVER_ARCHIVE_NAME}"
 
 # Download remaining components if needed
 if [ "$NO_REDOWNLOAD" = false ]; then
   echo "Downloading VS Code for Linux ARM64..."
   wget --show-progress -O "${BUILD_DIR}/vscode-linux-arm64.tar.gz" "${VSCODE_LINUX_ARM64_URL}"
 
-  echo "Downloading Language Server for Linux ARM64..."
-  wget --show-progress -O "${BUILD_DIR}/language-server-arm64" "${LANGUAGE_SERVER_ARM64_URL}"
-
-  echo "Downloading fd for Linux ARM64..."
-  wget --show-progress -O "${BUILD_DIR}/fd-arm64.tar.gz" "${FD_ARM64_URL}"
+  echo "Downloading Windsurf server for Linux ARM64..."
+  wget --show-progress -O "${BUILD_DIR}/${WINDSURF_SERVER_ARCHIVE_NAME}" "${WINDSURF_SERVER_URL}"
 
 else
   echo "Skipping download of remaining components."
@@ -151,8 +152,9 @@ fi
 echo "Extracting VS Code..."
 tar -xzf "${BUILD_DIR}/vscode-linux-arm64.tar.gz" -C "${VSCODE_DIR}" --strip-components=1
 
-echo "Extracting fd..."
-tar -xzf "${BUILD_DIR}/fd-arm64.tar.gz" -C "${FD_DIR}" --strip-components=1
+echo "Extracting Windsurf server..."
+mkdir -p "${WINDSURF_SERVER_DIR}"
+tar -xzf "${BUILD_DIR}/${WINDSURF_SERVER_ARCHIVE_NAME}" -C "${WINDSURF_SERVER_DIR}" --strip-components=1
 
 # Build Windsurf
 echo "Building Windsurf..."
@@ -173,11 +175,11 @@ cp "${WINDSURF_SRC_DIR}/resources/app/product.json" "${FINAL_DIR}/resources/app/
 cp -R "${WINDSURF_SRC_DIR}/resources/app/extensions/"* "${FINAL_DIR}/resources/app/extensions/"
 cp "${WINDSURF_SRC_DIR}/resources/app/resources/linux/code.png" "${FINAL_DIR}/resources/app/resources/linux/code.png"
 
-# Copy language server and fd, and make them executable
+# Copy language server and fd from the Windsurf server archive, and make them executable
 BIN_DEST_DIR="${FINAL_DIR}/resources/app/extensions/windsurf/bin"
 mkdir -p "${BIN_DEST_DIR}"
-cp "${BUILD_DIR}/language-server-arm64" "${BIN_DEST_DIR}/language_server_linux_arm"
-cp "${FD_DIR}/fd" "${BIN_DEST_DIR}/fd"
+cp "${WINDSURF_SERVER_DIR}/extensions/windsurf/bin/language_server_linux_arm" "${BIN_DEST_DIR}/language_server_linux_arm"
+cp "${WINDSURF_SERVER_DIR}/extensions/windsurf/bin/fd" "${BIN_DEST_DIR}/fd"
 chmod +x "${BIN_DEST_DIR}/language_server_linux_arm"
 chmod +x "${BIN_DEST_DIR}/fd"
 
